@@ -1,26 +1,28 @@
-#Requires AutoHotkey v2.0
 #SingleInstance Force
+#NoEnv
+SetBatchLines, -1
 
 ; ROALogin - Rise of Agon Auto-Login
 ; Automatically fills the password when the game launcher starts
 
-#Include "lib\dpapi.ahk"
-#Include "lib\config.ahk"
+#Include %A_ScriptDir%\lib\dpapi.ahk
+#Include %A_ScriptDir%\lib\config.ahk
 
 ; Check command-line arguments
 global RunSetup := false
-for arg in A_Args {
+for n, arg in A_Args {
     if (arg = "--setup" || arg = "-s" || arg = "/setup")
         RunSetup := true
 }
 
 ; Main entry point
 Main()
+return
 
 Main() {
     ; If --setup flag or no credentials, run setup
-    if (RunSetup || !Config.HasCredentials()) {
-        RunSetupMode()
+    if (RunSetup || !Config_HasCredentials()) {
+        ShowSetupGUI()
         return
     }
 
@@ -28,79 +30,67 @@ Main() {
     RunAutoLogin()
 }
 
-RunSetupMode() {
-    ; Include and run the setup GUI
-    #Include "setup.ahk"
-}
-
 RunAutoLogin() {
     ; Get game path
-    gamePath := Config.GetGamePath()
+    gamePath := Config_GetGamePath()
     if (gamePath = "" || !FileExist(gamePath)) {
-        MsgBox("Could not find Rise of Agon installation.`n`nPlease run setup to configure the game path.",
-            "ROALogin - Error", "Icon!")
-        RunSetupMode()
+        MsgBox, 48, ROALogin - Error, Could not find Rise of Agon installation.`n`nPlease run setup to configure the game path.
+        ShowSetupGUI()
         return
     }
 
     ; Read and decrypt password
-    try {
-        encryptedPassword := FileRead(Config.CredentialFile)
-        password := DPAPI.Decrypt(encryptedPassword)
-    } catch as e {
-        MsgBox("Failed to read saved password.`n`nPlease run setup again.`n`nError: " e.Message,
-            "ROALogin - Error", "Icon!")
-        RunSetupMode()
+    FileRead, encryptedPassword, %Config_CredentialFile%
+    if (ErrorLevel || encryptedPassword = "") {
+        MsgBox, 48, ROALogin - Error, Failed to read saved password.`n`nPlease run setup again.
+        ShowSetupGUI()
         return
     }
 
+    password := DPAPI_Decrypt(encryptedPassword)
     if (password = "") {
-        MsgBox("No password found. Please run setup to save your password.",
-            "ROALogin - Error", "Icon!")
-        RunSetupMode()
+        MsgBox, 48, ROALogin - Error, No password found. Please run setup to save your password.
+        ShowSetupGUI()
         return
     }
 
     ; Launch the game
-    try {
-        Run('"' gamePath '"')
-    } catch as e {
-        MsgBox("Failed to launch game.`n`nPath: " gamePath "`n`nError: " e.Message,
-            "ROALogin - Error", "Icon!")
+    Run, "%gamePath%", , , gamePID
+    if (ErrorLevel) {
+        MsgBox, 48, ROALogin - Error, Failed to launch game.`n`nPath: %gamePath%
         return
     }
 
     ; Wait for the login window using window class (most reliable)
-    SetTitleMatchMode(2)  ; Partial match for titles
+    SetTitleMatchMode, 2  ; Partial match for titles
 
-    ; Try to find window by class first (most reliable), then by title
-    hwnd := WinWait(Config.WindowClass, , Config.WindowWaitTimeout / 1000)
+    ; Try to find window by class first
+    WinWait, %Config_WindowClass%, , %Config_WindowWaitTimeout%
+    hwnd := WinExist()
 
     if (!hwnd) {
         ; Try by exe name
-        hwnd := WinWait(Config.WindowExe, , 5)
+        WinWait, %Config_WindowExe%, , 5
+        hwnd := WinExist()
     }
 
     if (!hwnd) {
-        ; Try by title as last resort
-        for title in Config.WindowTitles {
-            hwnd := WinWait(title, , 5)
-            if (hwnd)
-                break
-        }
+        ; Try by title
+        WinWait, %Config_WindowTitle%, , 5
+        hwnd := WinExist()
     }
 
     if (!hwnd) {
         ; Window didn't appear in time - exit silently
-        ExitApp()
+        ExitApp
     }
 
     ; Give the window time to fully load
-    Sleep(Config.WindowLoadDelay)
+    Sleep, %Config_WindowLoadDelay%
 
     ; Activate the window
-    WinActivate(hwnd)
-    Sleep(200)
+    WinActivate, ahk_id %hwnd%
+    Sleep, 200
 
     ; Fill the password directly into Edit2 control
     FillPassword(password, hwnd)
@@ -109,43 +99,29 @@ RunAutoLogin() {
     password := ""
 
     ; Exit
-    ExitApp()
+    ExitApp
 }
 
 FillPassword(password, hwnd) {
-    ; Method 1: Direct control text (most reliable, no focus needed)
-    try {
-        ControlSetText(password, Config.PasswordControl, hwnd)
+    ; Method 1: Direct control text (most reliable)
+    ControlSetText, %Config_PasswordControl%, %password%, ahk_id %hwnd%
+    if (!ErrorLevel)
         return
-    }
 
     ; Method 2: ControlSend to the password field
-    try {
-        ControlFocus(Config.PasswordControl, hwnd)
-        Sleep(Config.KeystrokeDelay)
-        ControlSendText(password, Config.PasswordControl, hwnd)
+    ControlFocus, %Config_PasswordControl%, ahk_id %hwnd%
+    Sleep, %Config_KeystrokeDelay%
+    ControlSend, %Config_PasswordControl%, %password%, ahk_id %hwnd%
+    if (!ErrorLevel)
         return
-    }
 
     ; Method 3: Tab from username and type (fallback)
-    try {
-        ControlFocus(Config.UsernameControl, hwnd)
-        Sleep(Config.KeystrokeDelay)
-        SendInput("{Tab}")
-        Sleep(Config.KeystrokeDelay)
-        SendText(password)
-        return
-    }
-
-    ; Method 4: Clipboard paste as last resort
-    try {
-        oldClipboard := A_Clipboard
-        A_Clipboard := password
-        Sleep(100)
-        ControlFocus(Config.PasswordControl, hwnd)
-        Sleep(Config.KeystrokeDelay)
-        Send("^v")
-        Sleep(100)
-        A_Clipboard := oldClipboard
-    }
+    ControlFocus, %Config_UsernameControl%, ahk_id %hwnd%
+    Sleep, %Config_KeystrokeDelay%
+    Send, {Tab}
+    Sleep, %Config_KeystrokeDelay%
+    SendRaw, %password%
 }
+
+; Include setup GUI
+#Include %A_ScriptDir%\setup.ahk

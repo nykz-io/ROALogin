@@ -1,131 +1,119 @@
-#Requires AutoHotkey v2.0
-
 ; ROALogin Setup GUI
 ; First-time setup for password storage and shortcut creation
-
-; This file is included by roa_login.ahk when setup is needed
-; It can also be run standalone
-
-; Only run setup GUI if this file is the main script or RunSetup is true
-if (A_ScriptName = "setup.ahk" || (IsSet(RunSetup) && RunSetup) || !Config.HasCredentials()) {
-    ShowSetupGUI()
-}
+; This file is included by roa_login.ahk
 
 ShowSetupGUI() {
-    ; Create the setup window
-    setupGui := Gui("+AlwaysOnTop", "ROALogin Setup")
-    setupGui.SetFont("s10")
-
-    ; Password section
-    setupGui.Add("Text", "w300", "Enter your Rise of Agon password:")
-    passwordEdit := setupGui.Add("Edit", "w300 Password vPassword")
-
-    setupGui.Add("Text", "w300 y+15", "Confirm password:")
-    confirmEdit := setupGui.Add("Edit", "w300 Password vConfirmPassword")
-
-    ; Game path section
-    setupGui.Add("Text", "w300 y+20", "Game executable path:")
+    global
 
     ; Try to auto-detect path
-    detectedPath := Config.GetGamePath()
-    pathEdit := setupGui.Add("Edit", "w230 vGamePath", detectedPath)
-    browseBtn := setupGui.Add("Button", "x+5 w60", "Browse")
-    browseBtn.OnEvent("Click", BrowseForGame)
+    detectedPath := Config_GetGamePath()
+
+    ; Create the setup window
+    Gui, Setup:New, +AlwaysOnTop, ROALogin Setup
+    Gui, Setup:Font, s10
+
+    ; Password section
+    Gui, Setup:Add, Text, w300, Enter your Rise of Agon password:
+    Gui, Setup:Add, Edit, w300 Password vSetupPassword
+
+    Gui, Setup:Add, Text, w300 y+15, Confirm password:
+    Gui, Setup:Add, Edit, w300 Password vSetupConfirmPassword
+
+    ; Game path section
+    Gui, Setup:Add, Text, w300 y+20, Game executable path:
+    Gui, Setup:Add, Edit, w230 vSetupGamePath, %detectedPath%
+    Gui, Setup:Add, Button, x+5 w60 gBrowseForGame, Browse
 
     ; Status indicator for path
-    pathStatus := setupGui.Add("Text", "x10 w300 cGreen vPathStatus",
-        detectedPath != "" && FileExist(detectedPath) ? "Game found" : "")
+    statusText := (detectedPath != "" && FileExist(detectedPath)) ? "Game found" : ""
+    Gui, Setup:Add, Text, x10 w300 cGreen vSetupPathStatus, %statusText%
 
     ; Shortcut option
-    setupGui.Add("Text", "x10 y+20 w300", "")
-    shortcutCheck := setupGui.Add("Checkbox", "vCreateShortcut Checked", "Create desktop shortcut")
+    Gui, Setup:Add, Text, x10 y+20 w300
+    Gui, Setup:Add, Checkbox, vSetupCreateShortcut Checked, Create desktop shortcut
 
     ; Buttons
-    setupGui.Add("Text", "w300 y+20", "")  ; Spacer
-    saveBtn := setupGui.Add("Button", "x10 w140 Default", "Save && Launch Game")
-    saveBtn.OnEvent("Click", SaveSettings)
+    Gui, Setup:Add, Text, w300 y+20
+    Gui, Setup:Add, Button, x10 w140 Default gSaveSettings, Save && Launch Game
+    Gui, Setup:Add, Button, x+20 w140 gSetupGuiClose, Cancel
 
-    cancelBtn := setupGui.Add("Button", "x+20 w140", "Cancel")
-    cancelBtn.OnEvent("Click", (*) => ExitApp())
+    Gui, Setup:Show
+    return
 
-    ; Handle window close
-    setupGui.OnEvent("Close", (*) => ExitApp())
+BrowseForGame:
+    FileSelectFile, selectedFile, 1, , Select Darkfall_RoA.exe, Executable (*.exe)
+    if (selectedFile != "") {
+        GuiControl, Setup:, SetupGamePath, %selectedFile%
+        if FileExist(selectedFile)
+            GuiControl, Setup:, SetupPathStatus, Game found
+        else
+            GuiControl, Setup:, SetupPathStatus,
+    }
+    return
 
-    ; Show the GUI
-    setupGui.Show()
+SaveSettings:
+    Gui, Setup:Submit, NoHide
 
-    ; Browse button handler
-    BrowseForGame(*) {
-        selectedFile := FileSelect(1, , "Select Darkfall_RoA.exe", "Executable (*.exe)")
-        if (selectedFile != "") {
-            pathEdit.Value := selectedFile
-            if FileExist(selectedFile)
-                pathStatus.Value := "Game found"
-            else
-                pathStatus.Value := ""
-        }
+    ; Validate password
+    if (SetupPassword = "") {
+        MsgBox, 48, Validation Error, Please enter a password.
+        return
     }
 
-    ; Save settings handler
-    SaveSettings(*) {
-        ; Get values
-        data := setupGui.Submit(false)  ; Don't hide the GUI yet
-
-        ; Validate password
-        if (data.Password = "") {
-            MsgBox("Please enter a password.", "Validation Error", "Icon!")
-            return
-        }
-
-        if (data.Password != data.ConfirmPassword) {
-            MsgBox("Passwords do not match.", "Validation Error", "Icon!")
-            return
-        }
-
-        ; Validate game path
-        if (data.GamePath = "" || !FileExist(data.GamePath)) {
-            MsgBox("Please select a valid game executable.", "Validation Error", "Icon!")
-            return
-        }
-
-        ; Ensure directories exist
-        Config.EnsureCredentialDir()
-
-        ; Encrypt and save password
-        try {
-            encryptedPassword := DPAPI.Encrypt(data.Password)
-            FileDelete(Config.CredentialFile)  ; Remove old file if exists
-        } catch {
-            ; File might not exist, that's OK
-        }
-
-        try {
-            FileAppend(encryptedPassword, Config.CredentialFile)
-        } catch as e {
-            MsgBox("Failed to save password.`n`nError: " e.Message, "Error", "Icon!")
-            return
-        }
-
-        ; Save game path
-        Config.SaveGamePath(data.GamePath)
-
-        ; Create shortcut if requested
-        if (data.CreateShortcut) {
-            CreateDesktopShortcut()
-        }
-
-        ; Show success message
-        MsgBox("Settings saved successfully!`n`nYour password has been encrypted and stored securely.",
-            "ROALogin Setup", "Iconi")
-
-        ; Close setup and launch game
-        setupGui.Destroy()
-
-        ; If we have everything set up, run the auto-login
-        if (Config.HasCredentials()) {
-            RunAutoLogin()
-        }
+    if (SetupPassword != SetupConfirmPassword) {
+        MsgBox, 48, Validation Error, Passwords do not match.
+        return
     }
+
+    ; Validate game path
+    if (SetupGamePath = "" || !FileExist(SetupGamePath)) {
+        MsgBox, 48, Validation Error, Please select a valid game executable.
+        return
+    }
+
+    ; Ensure directories exist
+    Config_EnsureCredentialDir()
+
+    ; Encrypt and save password
+    encryptedPassword := DPAPI_Encrypt(SetupPassword)
+    if (encryptedPassword = "") {
+        MsgBox, 48, Error, Failed to encrypt password.
+        return
+    }
+
+    ; Delete old file if exists
+    FileDelete, %Config_CredentialFile%
+
+    ; Write new encrypted password
+    FileAppend, %encryptedPassword%, %Config_CredentialFile%
+    if (ErrorLevel) {
+        MsgBox, 48, Error, Failed to save password.
+        return
+    }
+
+    ; Save game path
+    Config_SaveGamePath(SetupGamePath)
+
+    ; Create shortcut if requested
+    if (SetupCreateShortcut)
+        CreateDesktopShortcut()
+
+    ; Show success message
+    MsgBox, 64, ROALogin Setup, Settings saved successfully!`n`nYour password has been encrypted and stored securely.
+
+    ; Close setup
+    Gui, Setup:Destroy
+
+    ; Launch game with auto-login
+    if (Config_HasCredentials())
+        RunAutoLogin()
+    return
+
+SetupGuiClose:
+SetupGuiEscape:
+    Gui, Setup:Destroy
+    ExitApp
+    return
 }
 
 CreateDesktopShortcut() {
@@ -133,36 +121,32 @@ CreateDesktopShortcut() {
     desktopPath := A_Desktop
 
     ; Get current script path (or compiled exe path)
-    if A_IsCompiled
+    if (A_IsCompiled)
         exePath := A_ScriptFullPath
     else
-        exePath := A_AhkPath '" "' A_ScriptDir '\roa_login.ahk'
+        exePath := A_AhkPath
 
     shortcutPath := desktopPath "\Rise of Agon (Auto-Login).lnk"
 
     ; Create shortcut using COM
-    try {
-        shell := ComObject("WScript.Shell")
-        shortcut := shell.CreateShortcut(shortcutPath)
+    shell := ComObjCreate("WScript.Shell")
+    shortcut := shell.CreateShortcut(shortcutPath)
 
-        if A_IsCompiled {
-            shortcut.TargetPath := A_ScriptFullPath
-            shortcut.WorkingDirectory := A_ScriptDir
-        } else {
-            shortcut.TargetPath := A_AhkPath
-            shortcut.Arguments := '"' A_ScriptDir '\roa_login.ahk"'
-            shortcut.WorkingDirectory := A_ScriptDir
-        }
-
-        shortcut.Description := "Launch Rise of Agon with auto-login"
-
-        ; Try to use the game icon
-        gamePath := Config.GetGamePath()
-        if (gamePath != "" && FileExist(gamePath))
-            shortcut.IconLocation := gamePath ",0"
-
-        shortcut.Save()
-    } catch as e {
-        MsgBox("Could not create desktop shortcut.`n`nError: " e.Message, "Warning", "Icon!")
+    if (A_IsCompiled) {
+        shortcut.TargetPath := A_ScriptFullPath
+        shortcut.WorkingDirectory := A_ScriptDir
+    } else {
+        shortcut.TargetPath := A_AhkPath
+        shortcut.Arguments := """" A_ScriptDir "\roa_login.ahk"""
+        shortcut.WorkingDirectory := A_ScriptDir
     }
+
+    shortcut.Description := "Launch Rise of Agon with auto-login"
+
+    ; Try to use the game icon
+    gamePath := Config_GetGamePath()
+    if (gamePath != "" && FileExist(gamePath))
+        shortcut.IconLocation := gamePath ",0"
+
+    shortcut.Save()
 }
